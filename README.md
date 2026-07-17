@@ -14,7 +14,7 @@ ax.plot(x, np.cos(x), label="cos", linestyle="--")
 ax.set_xlabel("x"); ax.set_ylabel("y"); ax.legend()
 
 fig.save("out.svg")                       # static vector SVG
-fig.save("out.png"); fig.save("out.pdf")  # raster + vector   (pip install simpleplot[export])
+fig.save("out.png"); fig.save("out.pdf")  # raster + vector export
 fig.save("out.html", interactive=True)    # interactive toolbar: zoom / pick / annotate
 fig.show()                                # native pop-up window
 ```
@@ -36,24 +36,29 @@ fig.show()                                # native pop-up window
 ## Install
 
 ```bash
-pip install simpleplot            # core: SVG + HTML + Jupyter (numpy only)
-pip install simpleplot[gui]       # + native pop-up window  (fig.show(), pywebview)
-pip install simpleplot[export]    # + PNG/PDF export         (Pillow, svglib, reportlab)
-pip install simpleplot[dev]       # + pytest
-pip install simpleplot[bench]     # + matplotlib (for benchmarks)
+pip install simpleplot            # SVG + interactive HTML + PNG/PDF export
+pip install simpleplot[gui]       # + native pop-up window (fig.show(), pywebview)
+pip install simpleplot[dev]       # + pytest (contributors)
+pip install simpleplot[bench]     # + matplotlib (benchmark comparison)
 ```
+
+The standard install covers **all file output** -- SVG, interactive HTML, PNG and
+vector PDF -- with pure-wheel dependencies that install everywhere (servers, CI,
+notebooks). Only the native ``fig.show()`` window needs the ``[gui]`` extra,
+since it pulls a desktop webview stack; without it, ``fig.show()`` falls back to
+the browser.
 
 ## Output surfaces (one scene, many targets)
 
 | Call | Result |
 |------|--------|
 | `fig.save("x.svg")` | static vector SVG |
-| `fig.save("x.png")` / `fig.savefig(...)` | raster PNG (supersampled Pillow backend) · `[export]` |
-| `fig.save("x.pdf")` | vector PDF (svglib + reportlab) · `[export]` |
+| `fig.save("x.png")` / `fig.savefig(...)` | raster PNG (supersampled Pillow backend) |
+| `fig.save("x.pdf")` | vector PDF (svglib + reportlab) |
 | `fig.save("x.html", interactive=True)` | interactive HTML (self-contained JS toolbar) |
 | `fig.to_svg()` / `fig.to_html()` | string, for embedding |
 | `fig._repr_svg_()` | inline SVG in Jupyter |
-| `fig.show()` | native pop-up window (pywebview; falls back to browser) |
+| `fig.show()` | native pop-up window (pywebview, `[gui]` extra; falls back to browser) |
 
 ## Interactive figures
 

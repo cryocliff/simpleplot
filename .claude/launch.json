@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8971", "--directory", "examples"],
       "port": 8971
+    },
+    {
+      "name": "docs",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8972", "--directory", "docs/_build/html"],
+      "port": 8972
     }
   ]
 }

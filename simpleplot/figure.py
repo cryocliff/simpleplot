@@ -225,15 +225,17 @@ class Figure:
             f"{svg}{script}</body></html>"
         )
 
-    def _repr_html_(self):
-        # Only used if a frontend prefers HTML; keep it interactive.
-        return self.to_html(interactive=True)
+    # NB: intentionally *no* _repr_html_. Jupyter prefers text/html over
+    # image/svg+xml, and returning a full interactive HTML document renders
+    # messily in an output cell (and its scripts don't run there). Notebooks
+    # therefore fall back to the clean static SVG above; for an interactive
+    # figure in a notebook, embed to_html() in an <iframe> (see the docs).
 
     def save(self, path: str, interactive: bool = False, scale: int = 2):
         """Save by extension: ``.svg``, ``.html``, ``.png``, or ``.pdf``.
 
-        PNG (raster, supersampled by ``scale``) and PDF (vector) require the
-        ``[export]`` extra: ``pip install simpleplot[export]``.
+        All formats work with the standard install (PNG is a supersampled
+        raster; PDF is vector).
         """
         lower = path.lower()
         if lower.endswith(".html") or lower.endswith(".htm"):
@@ -241,12 +243,7 @@ class Figure:
         elif lower.endswith(".svg"):
             content = self.to_svg()
         elif lower.endswith(".png"):
-            try:
-                from .raster import save_png
-            except ImportError as e:
-                raise RuntimeError(
-                    "PNG export needs the [export] extra: pip install simpleplot[export]"
-                ) from e
+            from .raster import save_png
             return save_png(self, path, scale=scale)
         elif lower.endswith(".pdf"):
             from .raster import save_pdf
@@ -272,10 +269,12 @@ class Figure:
         With ``wait_for_extract=True`` the call becomes an interactive point-
         picking session: the kernel blocks, the user drops markers and clicks
         **Extract**, and *that* returns the markers to the kernel and closes the
-        window (no manual close needed). This requires the ``[gui]`` extra.
+        window (no manual close needed).
 
-        Without the ``[gui]`` extra it falls back to opening the default browser
-        and returns ``None`` (use the in-page Extract panel to copy/download).
+        The native window needs the ``[gui]`` extra
+        (``pip install simpleplot[gui]``). Without it, this falls back to opening
+        the figure in the default browser and returns ``None`` (use the in-page
+        Extract panel to copy/download).
         """
         html = self.to_html(interactive=interactive, wait_extract=wait_for_extract)
         w = int(self.figsize[0] * self.style.dpi) + 40
@@ -285,8 +284,8 @@ class Figure:
         except ImportError:
             if wait_for_extract:
                 raise RuntimeError(
-                    "wait_for_extract=True needs a kernel<->UI bridge; install "
-                    "the GUI extra: pip install simpleplot[gui]"
+                    "wait_for_extract=True needs the native window; install it "
+                    "with: pip install simpleplot[gui]"
                 )
             import os
             import tempfile

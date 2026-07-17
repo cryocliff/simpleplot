@@ -11,17 +11,24 @@ requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "simpleplot contributors" }]
 keywords = ["plotting", "svg", "visualization", "matplotlib", "figure"]
-dependencies = ["numpy>=1.21"]
+# The standard install covers all file output out of the box: SVG, interactive
+# HTML, PNG raster, and vector PDF -- pure-wheel deps, installable everywhere.
+dependencies = [
+    "numpy>=1.21",
+    "pillow>=9",        # PNG raster export (fig.save('*.png'))
+    "svglib>=1.4",      # PDF export (fig.save('*.pdf'))
+    "reportlab>=3.6",   # PDF export
+]
 
 [project.optional-dependencies]
-# Native pop-up window backend (fig.show()). Uses the OS-native webview
-# (WebView2 on Windows, WebKitGTK on Linux, Cocoa WebKit on macOS).
+# The native fig.show() window needs a desktop webview stack (pythonnet on
+# Windows, pyobjc on macOS, system GTK/WebKit on Linux). Keep it optional so the
+# standard install stays server/CI/notebook friendly; fig.show() otherwise
+# falls back to the browser.
 gui = ["pywebview>=4.0"]
 dev = ["pytest>=7"]
 # Benchmarking against matplotlib (benchmarks/ and the comparative perf tests).
 bench = ["matplotlib>=3.5"]
-# PNG (Pillow) and vector PDF (svglib + reportlab) export via fig.save().
-export = ["pillow>=9", "svglib>=1.4", "reportlab>=3.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

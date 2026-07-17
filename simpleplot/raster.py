@@ -85,7 +85,8 @@ def save_pdf(fig, path):
         from svglib.svglib import svg2rlg
     except ImportError as e:
         raise RuntimeError(
-            "PDF export needs the [export] extra: pip install simpleplot[export]"
+            "PDF export needs svglib + reportlab (standard dependencies); "
+            "reinstall simpleplot to restore them"
         ) from e
     drawing = svg2rlg(io.StringIO(fig.to_svg()))
     renderPDF.drawToFile(drawing, path)

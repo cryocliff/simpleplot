@@ -32,6 +32,11 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 
+# Sphinx docs build output (regenerate with sphinx-build; gallery is auto-built)
+docs/_build/
+docs/auto_examples/
+docs/sg_execution_times.rst
+
 # Editors / IDEs
 .idea/
 .vscode/
