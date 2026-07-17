@@ -49,6 +49,14 @@ def test_log_ticks_are_decades():
     np.testing.assert_array_equal(log_ticks(0.01, 10), [0.01, 0.1, 1, 10])
 
 
+def test_log_ticks_nonpositive_vmin_stays_near_vmax():
+    # A non-positive lower bound (e.g. user set_xlim(0, 100) on a log axis)
+    # must clamp to three decades below vmax, not blow up to ~300 decades.
+    from simpleplot.ticker import log_ticks
+    np.testing.assert_array_equal(log_ticks(0.0, 100.0), [0.1, 1, 10, 100])
+    np.testing.assert_array_equal(log_ticks(-5.0, 1000.0), [1, 10, 100, 1000])
+
+
 # -- ticker ----------------------------------------------------------------
 def test_nice_ticks_within_range_and_spaced():
     ticks = nice_ticks(0, 10, n=5)

@@ -39,7 +39,9 @@ def nice_ticks(vmin: float, vmax: float, n: int = 5) -> np.ndarray:
 def log_ticks(vmin: float, vmax: float) -> np.ndarray:
     """Decade tick locations (powers of 10) spanning [vmin, vmax]."""
     if vmin <= 0:
-        vmin = min(vmax / 1000.0, 1e-300) if vmax > 0 else 1e-3
+        # Data/limits reached here non-positive; pick a small positive floor
+        # (three decades below the top), never zero. Matches the interactive JS.
+        vmin = max(vmax / 1000.0, 1e-300) if vmax > 0 else 1e-3
     lo = math.floor(math.log10(vmin))
     hi = math.ceil(math.log10(vmax))
     if hi - lo > 12:  # avoid absurd counts for huge dynamic range
