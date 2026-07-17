@@ -42,14 +42,22 @@ html_static_path = ["_static"]
 # errors) and still catch real documentation problems.
 suppress_warnings = ["config.cache"]
 
-# -- HTML output (pydata theme, like the matplotlib docs) ---------------------
-html_theme = "pydata_sphinx_theme"
+# -- HTML output (Read the Docs theme) ----------------------------------------
+html_theme = "sphinx_rtd_theme"
 html_title = f"simpleplot {version}"
 html_theme_options = {
-    "show_prev_next": True,
-    "navigation_with_keys": True,
-    "github_url": "https://github.com/simpleplot/simpleplot",
-    "icon_links": [],
+    "collapse_navigation": False,
+    "navigation_depth": 3,
+    "prev_next_buttons_location": "bottom",
+    "style_external_links": True,
+}
+# "Edit on GitHub" / source links in the RTD theme header.
+html_context = {
+    "display_github": True,
+    "github_user": "simpleplot",
+    "github_repo": "simpleplot",
+    "github_version": "main",
+    "conf_py_path": "/docs/",
 }
 
 
