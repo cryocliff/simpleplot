@@ -1,0 +1,53 @@
+# Byte-compiled / optimized / cached
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+wheels/
+*.egg
+*.egg-info/
+.eggs/
+
+# Test & coverage caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Generated example outputs (regenerate with the scripts in examples/).
+# Remove these lines if you want to commit showcase figures.
+examples/*.svg
+examples/*.html
+examples/*.png
+examples/*.pdf
+
+# Claude Code local settings
+.claude/settings.local.json

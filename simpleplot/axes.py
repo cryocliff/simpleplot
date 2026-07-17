@@ -1,0 +1,554 @@
+"""The Axes object: a self-contained plotting region on a figure.
+
+Mirrors the subset of matplotlib's ``Axes`` API needed for line, scatter, and
+pcolormesh plots. Holds its own artists, limits, labels, and a reference to the
+owning figure's :class:`~simpleplot.style.Style` -- there is no global current-axes
+state anywhere.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+
+from .artists import (
+    Annotation, Bars, BoxPlot, Contour, ErrorBar, EventPlot, FillBetween,
+    FrameLine2D, Image, Line2D, Pie, QuadMesh, Quiver, ScatterCollection, Stem,
+    Text, Violin, VLine,
+)
+from .colors import Normalize, get_cmap
+
+
+def _gaussian_kde(data, grid):
+    """Simple Gaussian KDE (Silverman bandwidth) evaluated on ``grid``."""
+    data = np.asarray(data, float)
+    n = data.size
+    std = data.std(ddof=1) if n > 1 else 1.0
+    bw = 1.06 * (std or 1.0) * n ** (-1 / 5)
+    if bw == 0:
+        bw = 1.0
+    u = (grid[:, None] - data[None, :]) / bw
+    k = np.exp(-0.5 * u * u) / np.sqrt(2 * np.pi)
+    return k.sum(axis=1) / (n * bw)
+
+
+class Axes:
+    def __init__(self, figure, rect):
+        self.figure = figure
+        self.style = figure.style
+        self._rect = tuple(rect)  # (left, bottom, w, h) in figure fractions
+
+        self.artists = []
+        self._xlim = None  # None => autoscale
+        self._ylim = None
+        self._xticks = None  # None => automatic "nice" ticks; [] => none
+        self._yticks = None
+        self._xlabel = ""
+        self._ylabel = ""
+        self._title = ""
+        self._grid = False
+        self._color_idx = 0
+
+        self._xscale = "linear"
+        self._yscale = "linear"
+        self._aspect = None        # None='auto'; 1.0='equal'; float=y/x ratio
+        self._axis_off = False
+        self._subplotspec = None   # (nrows, ncols, index) for tight_layout
+
+        # Colorbar bookkeeping.
+        self._is_colorbar = False
+        self._cbar_source = None
+
+    # -- style / color cycle ------------------------------------------------
+    def _next_color(self):
+        cycle = self.style.color_cycle
+        color = cycle[self._color_idx % len(cycle)]
+        self._color_idx += 1
+        return color
+
+    # -- plotting methods ---------------------------------------------------
+    def plot(self, *args, color=None, linewidth=None, linestyle="-",
+             label=None, alpha=1.0, values=None):
+        """Plot ``y`` or ``x, y`` as a line. Returns the :class:`Line2D`.
+
+        ``values`` is an optional ``{name: array}`` of extra per-point
+        dimensions (e.g. ``z``) surfaced when a point is picked interactively.
+        """
+        if len(args) == 1:
+            y = np.asarray(args[0], dtype=float)
+            x = np.arange(y.size, dtype=float)
+        elif len(args) >= 2:
+            x = np.asarray(args[0], dtype=float)
+            y = np.asarray(args[1], dtype=float)
+        else:
+            raise TypeError("plot() requires y or x, y")
+
+        line = Line2D(
+            x, y,
+            color=color or self._next_color(),
+            linewidth=self.style.line_width if linewidth is None else linewidth,
+            linestyle=linestyle, label=label, alpha=alpha, values=values,
+        )
+        self.artists.append(line)
+        return line
+
+    def scatter(self, x, y, s=None, c=None, color=None, marker="o",
+                label=None, alpha=1.0, cmap="viridis", norm=None,
+                vmin=None, vmax=None, values=None):
+        """Scatter ``y`` vs ``x``. ``c`` maps values through ``cmap``.
+
+        ``values`` is an optional ``{name: array}`` of extra per-point
+        dimensions (e.g. ``z`` or a 4th value) surfaced by point picking; the
+        color dimension ``c`` is included automatically.
+        """
+        if norm is None and (vmin is not None or vmax is not None):
+            norm = Normalize(vmin, vmax)
+        coll = ScatterCollection(
+            x, y,
+            s=self.style.marker_size if s is None else s,
+            color=(color or self._next_color()) if c is None else None,
+            marker=marker, label=label, alpha=alpha,
+            c=c, cmap=cmap, norm=norm, values=values,
+        )
+        self.artists.append(coll)
+        return coll
+
+    def plot_frames(self, x, Y, slider_values=None, slider_label="frame",
+                    shared=True, slider_group=None,
+                    color=None, linewidth=None, linestyle="-", label=None,
+                    alpha=1.0):
+        """Plot 3-D data as a line with a slider over the extra dimension.
+
+        ``Y`` has shape ``(n_frames, n_points)``; ``x`` is shared
+        ``(n_points,)`` or per-frame ``(n_frames, n_points)``.
+
+        Slider scope:
+
+        * ``shared=True`` (default) -- this series joins the figure's single
+          global slider, so all shared ``plot_frames`` panels scrub together.
+        * ``shared=False`` -- this axes gets its own slider docked beneath it.
+          Pass ``slider_group="name"`` to give several axes the same *connection
+          index*: each still has its own docked slider, but the UI shows an index
+          badge and a checkbox to link them so they scrub together on demand.
+
+        ``slider_values`` labels the extra axis (defaults to ``0..n-1``).
+        """
+        Y = np.asarray(Y, dtype=float)
+        if Y.ndim != 2:
+            raise ValueError("plot_frames() requires Y with shape (n_frames, n_points)")
+        art = FrameLine2D(
+            x, Y,
+            color=color or self._next_color(),
+            linewidth=self.style.line_width if linewidth is None else linewidth,
+            linestyle=linestyle, label=label, alpha=alpha,
+        )
+        axes_index = self.figure.axes.index(self)
+        if shared:
+            unit, index, is_global, axes_key = "main", None, True, None
+        else:
+            unit = f"ax{axes_index}"
+            index = slider_group if slider_group is not None else unit
+            is_global, axes_key = False, axes_index
+        art.slider_unit = unit
+        self.artists.append(art)
+        self.figure._register_slider(
+            unit, index, Y.shape[0], slider_values, slider_label,
+            is_global, axes_key,
+        )
+        return art
+
+    def pcolormesh(self, *args, cmap="viridis", norm=None, vmin=None, vmax=None):
+        """Pseudocolor plot of a 2-D array.
+
+        Signatures: ``pcolormesh(C)`` or ``pcolormesh(X, Y, C)``.
+        """
+        if len(args) == 1:
+            X = Y = None
+            C = args[0]
+        elif len(args) == 3:
+            X, Y, C = args
+        else:
+            raise TypeError("pcolormesh() takes C or X, Y, C")
+
+        mesh = QuadMesh(X, Y, C, cmap=cmap, norm=norm, vmin=vmin, vmax=vmax)
+        self.artists.append(mesh)
+        return mesh
+
+    def bar(self, x, height, width=0.8, bottom=0.0, color=None, edgecolor=None,
+            linewidth=0.8, label=None, alpha=1.0):
+        """Vertical bar chart."""
+        b = Bars(x, height, width, bottom, "vertical",
+                 color=color or self._next_color(), edgecolor=edgecolor,
+                 linewidth=linewidth, label=label, alpha=alpha)
+        self.artists.append(b)
+        return b
+
+    def barh(self, y, width, height=0.8, left=0.0, color=None, edgecolor=None,
+             linewidth=0.8, label=None, alpha=1.0):
+        """Horizontal bar chart."""
+        b = Bars(y, width, height, left, "horizontal",
+                 color=color or self._next_color(), edgecolor=edgecolor,
+                 linewidth=linewidth, label=label, alpha=alpha)
+        self.artists.append(b)
+        return b
+
+    def hist(self, data, bins=10, range=None, color=None, edgecolor="#ffffff",
+             label=None, alpha=1.0, density=False):
+        """Histogram. Returns ``(counts, edges, bars)``."""
+        counts, edges = np.histogram(np.asarray(data, float), bins=bins,
+                                     range=range, density=density)
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        widths = np.diff(edges)
+        b = Bars(centers, counts, widths, 0.0, "vertical",
+                 color=color or self._next_color(), edgecolor=edgecolor,
+                 linewidth=0.6, label=label, alpha=alpha)
+        self.artists.append(b)
+        return counts, edges, b
+
+    def step(self, x, y, where="pre", color=None, linewidth=None, label=None,
+             alpha=1.0):
+        """Step (staircase) plot."""
+        x = np.asarray(x, float)
+        y = np.asarray(y, float)
+        if where == "mid":
+            edges = np.concatenate([[x[0]], (x[:-1] + x[1:]) / 2, [x[-1]]])
+            xs, ys = np.repeat(edges, 2)[1:-1], np.repeat(y, 2)
+        elif where == "post":
+            xs, ys = np.repeat(x, 2)[1:], np.repeat(y, 2)[:-1]
+        else:  # 'pre'
+            xs, ys = np.repeat(x, 2)[:-1], np.repeat(y, 2)[1:]
+        return self.plot(xs, ys, color=color or self._next_color(),
+                         linewidth=linewidth, label=label, alpha=alpha)
+
+    def fill_between(self, x, y1, y2=0.0, color=None, alpha=0.4, label=None):
+        """Fill the area between ``y1`` and ``y2``."""
+        fb = FillBetween(x, y1, y2, color=color or self._next_color(),
+                         alpha=alpha, label=label)
+        self.artists.append(fb)
+        return fb
+
+    def stem(self, x, y=None, baseline=0.0, linecolor=None, markercolor=None,
+             label=None):
+        """Stem plot."""
+        if y is None:
+            y = np.asarray(x, float)
+            x = np.arange(y.size, dtype=float)
+        lc = linecolor or self._next_color()
+        s = Stem(x, y, baseline, linecolor=lc, markercolor=markercolor or lc,
+                 label=label)
+        self.artists.append(s)
+        return s
+
+    def errorbar(self, x, y, yerr=None, xerr=None, color=None, marker="o",
+                 markersize=None, capsize=3.0, linestyle="-", linewidth=None,
+                 label=None, alpha=1.0):
+        """Line/markers with error bars."""
+        eb = ErrorBar(
+            x, y, yerr=yerr, xerr=xerr, color=color or self._next_color(),
+            marker=marker,
+            markersize=self.style.marker_size if markersize is None else markersize,
+            capsize=capsize, linestyle=linestyle,
+            linewidth=self.style.line_width if linewidth is None else linewidth,
+            label=label, alpha=alpha)
+        self.artists.append(eb)
+        return eb
+
+    def imshow(self, A, cmap="viridis", norm=None, vmin=None, vmax=None,
+               extent=None, origin="upper", alpha=1.0, label=None):
+        """Display an image / 2-D array."""
+        im = Image(A, cmap=cmap, norm=norm, vmin=vmin, vmax=vmax, extent=extent,
+                   origin=origin, alpha=alpha, label=label)
+        self.artists.append(im)
+        return im
+
+    def pie(self, values, labels=None, colors=None, startangle=90.0, radius=1.0,
+            autopct=None):
+        """Pie chart. Hides the axis and fixes an equal-aspect square view."""
+        n = len(values)
+        if colors is None:
+            cyc = self.style.color_cycle
+            colors = [cyc[i % len(cyc)] for i in range(n)]
+        p = Pie(values, colors, labels=labels, startangle=startangle,
+                radius=radius, autopct=autopct)
+        self.artists.append(p)
+        self.set_axis_off()
+        self.set_xlim(-1.3, 1.3)
+        self.set_ylim(-1.3, 1.3)
+        return p
+
+    def boxplot(self, data, positions=None, widths=0.5, color=None,
+                orientation="vertical", label=None):
+        """Box-and-whisker plot of one or more datasets."""
+        if isinstance(data, np.ndarray) and data.ndim == 1:
+            data = [data]
+        data = [np.asarray(d, float) for d in data]
+        if positions is None:
+            positions = np.arange(1, len(data) + 1)
+        stats = []
+        for d in data:
+            q1, med, q3 = np.percentile(d, [25, 50, 75])
+            iqr = q3 - q1
+            lo_in = d[d >= q1 - 1.5 * iqr]
+            hi_in = d[d <= q3 + 1.5 * iqr]
+            lo = lo_in.min() if lo_in.size else q1
+            hi = hi_in.max() if hi_in.size else q3
+            fliers = d[(d < lo) | (d > hi)]
+            stats.append({"q1": q1, "med": med, "q3": q3, "lo": lo, "hi": hi,
+                          "fliers": fliers})
+        b = BoxPlot(positions, stats, widths, color=color or self._next_color(),
+                    orientation=orientation, label=label)
+        self.artists.append(b)
+        return b
+
+    def violinplot(self, data, positions=None, widths=0.5, color=None,
+                   orientation="vertical", label=None, points=100):
+        """Violin plot (kernel-density silhouettes)."""
+        if isinstance(data, np.ndarray) and data.ndim == 1:
+            data = [data]
+        data = [np.asarray(d, float) for d in data]
+        if positions is None:
+            positions = np.arange(1, len(data) + 1)
+        grids, halfwidths = [], []
+        for d in data:
+            grid = np.linspace(d.min(), d.max(), points)
+            dens = _gaussian_kde(d, grid)
+            peak = dens.max() or 1.0
+            grids.append(grid)
+            halfwidths.append(dens / peak * (widths / 2.0))
+        v = Violin(positions, grids, halfwidths,
+                   color=color or self._next_color(), orientation=orientation,
+                   label=label)
+        self.artists.append(v)
+        return v
+
+    def eventplot(self, positions, lineoffsets=None, linelengths=0.8, color=None,
+                  orientation="horizontal", label=None):
+        """Raster of event lines (one row per sequence)."""
+        if np.ndim(positions[0]) == 0:
+            positions = [positions]
+        rows = [np.asarray(r, float) for r in positions]
+        if lineoffsets is None:
+            lineoffsets = np.arange(1, len(rows) + 1)
+        e = EventPlot(rows, lineoffsets, linelengths, color=color or self._next_color(),
+                      orientation=orientation, label=label)
+        self.artists.append(e)
+        return e
+
+    def quiver(self, X, Y, U, V, scale=None, color=None, label=None):
+        """Field of arrows. ``scale`` maps (U, V) to data units (auto if None)."""
+        X = np.asarray(X, float); Y = np.asarray(Y, float)
+        U = np.asarray(U, float); V = np.asarray(V, float)
+        if scale is None:
+            mag = np.hypot(U, V)
+            mmax = mag.max() or 1.0
+            span = max(X.max() - X.min(), Y.max() - Y.min()) or 1.0
+            n = max(U.size, 1)
+            scale = 0.9 * (span / np.sqrt(n)) / mmax
+        q = Quiver(X, Y, U, V, scale, color=color or self._next_color(), label=label)
+        self.artists.append(q)
+        return q
+
+    def contour(self, *args, levels=8, colors=None, cmap="viridis", label=None):
+        """Contour lines. ``contour(Z)`` or ``contour(x, y, Z)``."""
+        if len(args) == 1:
+            Z = np.asarray(args[0], float)
+            x = np.arange(Z.shape[1], dtype=float)
+            y = np.arange(Z.shape[0], dtype=float)
+        elif len(args) == 3:
+            x, y, Z = (np.asarray(a, float) for a in args)
+        else:
+            raise TypeError("contour() takes Z or x, y, Z")
+        if np.ndim(levels) == 0:
+            levels = np.linspace(Z.min(), Z.max(), int(levels) + 2)[1:-1]
+        if colors is None:
+            lut = get_cmap(cmap)
+            idx = np.linspace(0, 255, len(levels)).astype(int)
+            colors = ["#%02x%02x%02x" % tuple(lut[i]) for i in idx]
+        elif isinstance(colors, str):
+            colors = [colors]
+        c = Contour(x, y, Z, levels, colors, label=label)
+        self.artists.append(c)
+        return c
+
+    def hist2d(self, x, y, bins=20, range=None, cmap="viridis"):
+        """2-D histogram rendered as an image. Returns ``(counts, image)``."""
+        counts, xe, ye = np.histogram2d(np.asarray(x, float), np.asarray(y, float),
+                                        bins=bins, range=range)
+        # counts is (nx, ny) indexed [xbin, ybin]; image rows are y, cols x.
+        im = self.imshow(counts.T, cmap=cmap, origin="lower",
+                         extent=(xe[0], xe[-1], ye[0], ye[-1]))
+        return counts, im
+
+    def stackplot(self, x, *ys, colors=None, alpha=0.8, labels=None):
+        """Stacked area plot."""
+        x = np.asarray(x, float)
+        layers = [np.asarray(y, float) for y in ys]
+        cyc = self.style.color_cycle
+        base = np.zeros_like(x)
+        out = []
+        for i, layer in enumerate(layers):
+            top = base + layer
+            color = (colors[i] if colors is not None else cyc[i % len(cyc)])
+            lbl = labels[i] if labels is not None else None
+            out.append(self.fill_between(x, base, top, color=color, alpha=alpha,
+                                         label=lbl))
+            base = top
+        return out
+
+    def set_xscale(self, scale):
+        """Set the x-axis scale: ``'linear'`` or ``'log'``."""
+        if scale not in ("linear", "log"):
+            raise ValueError("scale must be 'linear' or 'log'")
+        self._xscale = scale
+
+    def set_yscale(self, scale):
+        """Set the y-axis scale: ``'linear'`` or ``'log'``."""
+        if scale not in ("linear", "log"):
+            raise ValueError("scale must be 'linear' or 'log'")
+        self._yscale = scale
+
+    def set_aspect(self, aspect):
+        """Set the axes aspect. ``'equal'`` = 1 data-unit is equal in x and y;
+        ``'auto'`` fills the box (default); a number sets the y/x unit ratio.
+        Implemented box-adjust: the drawn box shrinks to honor the ratio."""
+        if aspect == "equal":
+            self._aspect = 1.0
+        elif aspect == "auto":
+            self._aspect = None
+        else:
+            self._aspect = float(aspect)
+
+    def semilogx(self, *args, **kwargs):
+        self.set_xscale("log")
+        return self.plot(*args, **kwargs)
+
+    def semilogy(self, *args, **kwargs):
+        self.set_yscale("log")
+        return self.plot(*args, **kwargs)
+
+    def loglog(self, *args, **kwargs):
+        self.set_xscale("log")
+        self.set_yscale("log")
+        return self.plot(*args, **kwargs)
+
+    def text(self, x, y, s, color=None, fontsize=None, ha="left", va="baseline",
+             rotation=0.0):
+        """Draw text ``s`` at data coordinates ``(x, y)``."""
+        t = Text(x, y, s, color=color or self.style.text_color,
+                 size=self.style.font_size if fontsize is None else fontsize,
+                 ha=ha, va=va, rotation=rotation)
+        self.artists.append(t)
+        return t
+
+    def annotate(self, text, xy, xytext=None, color=None, fontsize=None,
+                 ha="left", va="baseline", arrowprops=None):
+        """Annotate the point ``xy`` with ``text`` placed at ``xytext``.
+
+        Pass ``arrowprops={"color": ...}`` (or ``{}``) to draw an arrow from the
+        text to ``xy``.
+        """
+        a = Annotation(text, xy, xytext, color=color or self.style.text_color,
+                       size=self.style.font_size if fontsize is None else fontsize,
+                       ha=ha, va=va, arrowprops=arrowprops)
+        self.artists.append(a)
+        return a
+
+    def set_axis_off(self):
+        """Hide the spines, ticks, grid, and axis labels (keep the title)."""
+        self._axis_off = True
+
+    def axvline(self, x, color=None, linewidth=None, linestyle="--",
+                label=None, alpha=1.0):
+        """Draw a vertical line at data coordinate ``x`` (like matplotlib)."""
+        vl = VLine(
+            x,
+            color=color or self._next_color(),
+            linewidth=self.style.line_width if linewidth is None else linewidth,
+            linestyle=linestyle, label=label, alpha=alpha,
+        )
+        self.artists.append(vl)
+        return vl
+
+    # -- limits / labels ----------------------------------------------------
+    def set_xlim(self, left, right=None):
+        self._xlim = (left, right) if right is not None else tuple(left)
+        return self._xlim
+
+    def set_ylim(self, bottom, top=None):
+        self._ylim = (bottom, top) if top is not None else tuple(bottom)
+        return self._ylim
+
+    def set_xticks(self, ticks):
+        """Set explicit x tick locations. Pass ``[]`` to hide ticks."""
+        self._xticks = None if ticks is None else np.asarray(ticks, dtype=float)
+
+    def set_yticks(self, ticks):
+        """Set explicit y tick locations. Pass ``[]`` to hide ticks."""
+        self._yticks = None if ticks is None else np.asarray(ticks, dtype=float)
+
+    def set_xlabel(self, label):
+        self._xlabel = label
+
+    def set_ylabel(self, label):
+        self._ylabel = label
+
+    def set_title(self, title):
+        self._title = title
+
+    def grid(self, visible=True):
+        self._grid = bool(visible)
+
+    def legend(self):
+        """Enable a legend (drawn from artists that have a ``label``)."""
+        self._show_legend = True
+
+    _show_legend = False
+
+    # -- autoscaling --------------------------------------------------------
+    def get_xlim(self):
+        return self._resolved_limits()[0]
+
+    def get_ylim(self):
+        return self._resolved_limits()[1]
+
+    def _resolved_limits(self):
+        """Return ``((xmin, xmax), (ymin, ymax))``, autoscaling if unset."""
+        xlim, ylim = self._xlim, self._ylim
+        if xlim is not None and ylim is not None:
+            return xlim, ylim
+
+        bounds = [a.data_bounds() for a in self.artists]
+        bounds = [b for b in bounds if b is not None]
+        if not bounds:
+            axmin, axmax, aymin, aymax = 0.0, 1.0, 0.0, 1.0
+        else:
+            arr = np.array(bounds, dtype=float)
+            axmin, aymin = np.nanmin(arr[:, 0]), np.nanmin(arr[:, 2])
+            axmax, aymax = np.nanmax(arr[:, 1]), np.nanmax(arr[:, 3])
+
+        has_mesh = any(isinstance(a, QuadMesh) for a in self.artists)
+        px = _pad(axmin, axmax, self._xscale, tight=has_mesh)
+        py = _pad(aymin, aymax, self._yscale, tight=has_mesh)
+        return (xlim or px), (ylim or py)
+
+
+def _pad(lo, hi, scale="linear", tight=False, frac=0.05):
+    if scale == "log":
+        if hi <= 0:
+            hi = 1.0
+        if lo <= 0:
+            lo = hi * 1e-3            # data had non-positive values; clamp
+        llo, lhi = math.log10(lo), math.log10(hi)
+        if llo == lhi:
+            llo -= 0.5; lhi += 0.5
+        elif not tight:
+            pad = (lhi - llo) * frac
+            llo -= pad; lhi += pad
+        return (10.0 ** llo, 10.0 ** lhi)
+    if lo == hi:
+        return (lo - 0.5, hi + 0.5)
+    if tight:
+        return (lo, hi)
+    pad = (hi - lo) * frac
+    return (lo - pad, hi + pad)

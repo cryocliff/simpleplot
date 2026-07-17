@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simpleplot"
+version = "0.0.1"
+description = "A fast, figure-centric, SVG-first plotting library with a matplotlib-like API and no global state."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "simpleplot contributors" }]
+keywords = ["plotting", "svg", "visualization", "matplotlib", "figure"]
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+# Native pop-up window backend (fig.show()). Uses the OS-native webview
+# (WebView2 on Windows, WebKitGTK on Linux, Cocoa WebKit on macOS).
+gui = ["pywebview>=4.0"]
+dev = ["pytest>=7"]
+# Benchmarking against matplotlib (benchmarks/ and the comparative perf tests).
+bench = ["matplotlib>=3.5"]
+# PNG (Pillow) and vector PDF (svglib + reportlab) export via fig.save().
+export = ["pillow>=9", "svglib>=1.4", "reportlab>=3.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "perf: timing/benchmark tests (deselect with -m 'not perf')",
+]
+
+[project.urls]
+Homepage = "https://github.com/simpleplot/simpleplot"
+
+[tool.setuptools.packages.find]
+include = ["simpleplot*"]
+
+[tool.setuptools.package-data]
+simpleplot = ["fonts/*.py"]
